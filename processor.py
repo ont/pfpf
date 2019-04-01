@@ -1,3 +1,5 @@
+import types
+from tqdm import tqdm
 from multiprocessing import Process
 
 
@@ -24,12 +26,30 @@ class Processor(Process):
             try:
                 res = self.func(data)
                 if not res:
-                    res = data
+                    # res = data
+                    continue  # data was filtered out
 
-                self.qout.put((pos, res))
-            except Exception:
+                if isinstance(res, types.GeneratorType):
+                    # multiple result for single input
+                    for sres in res:
+                        self.qout.put((pos, sres))
+                else:
+                    self.qout.put((pos, res))
+
+            except Exception as e:
+                tqdm.write('[!] %s' % repr(e))
                 self.qerr.put((self.id, pos))  # send error position back
+
+        if getattr(self.func, 'end', None):
+            self.func.end()  # call end on object
 
     def func_name(self):
         """Returns name of callable"""
-        return getattr(self.func, '__name__', repr(self.func))
+        names = [
+            getattr(self.func, '__name__', None),
+            type(self.func).__name__
+            # repr(self.func)
+        ]
+        for name in names:
+            if name:
+                return name

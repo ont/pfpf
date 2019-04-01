@@ -1,16 +1,21 @@
+import os
 import pickle
+from tqdm import tqdm
 from processor import Processor
+from threading import Thread
 from multiprocessing import Queue
-from collections import Counter
+from stats import Stat
 
 
 class Pipe:
     """Base class for DSL"""
 
-    def __init__(self):
+    def __init__(self, stat=Stat):
         self.queue = Queue(1000)
         self.qerr = Queue()  # WARN: unlimited queue for errors
         self.procs = []
+        self.errs = []
+        self.stat = Stat()
 
     def __or__(self, func):
         if not callable(func):
@@ -20,11 +25,19 @@ class Pipe:
         proc = Processor(len(self.procs), func, qin, Queue(1000), self.qerr)
 
         self.procs.append(proc)
+
+        # TODO: return cloned version of self (immutable pipe). It will allow:
+        #       subpipe = pfile(...) | some | route
+        #       pipe1 = subpipe | route1
+        #       pipe2 = subpipe | route2
         return self
 
     def start(self):
         for proc in self.procs:
             proc.start()
+
+        ehandler = Thread(target=self.handle_errors)
+        ehandler.start()
 
         self.run()
 
@@ -34,12 +47,34 @@ class Pipe:
         for proc in self.procs:
             proc.join()
 
+        self.qerr.put(None)  # stop error handler thread
+
         self.end()
 
+    def handle_errors(self):
+        while True:
+            pair = self.qerr.get()
+
+            if not pair:
+                break
+
+            id, pos = pair
+
+            self.errs.append(pos)
+
+            self.stat.err(self.procs[id].func_name())
+
+    def process(self, pos, data):
+        """Must be called by run()"""
+        self.queue.put((pos, data))
+        self.stat.inc()
+
     def run(self):
+        # call process(line) here for each line
         raise NotImplementedError
 
     def end(self):
+        # display statistic here, process errors
         raise NotImplementedError
 
 
@@ -48,40 +83,30 @@ class FilePipe(Pipe):
         Pipe.__init__(self)
         self.fname = fname
         self.strip = strip
-        self.total = 0
 
     def run(self):
         with open(self.fname, 'rb') as f:
             seek = 0
-            for line in f:
-                sline = line.strip() if self.strip else line
+            with tqdm(total=os.path.getsize(self.fname)) as pbar:
+                for n, line in enumerate(f):
+                    if n > 0 and n % 100000 == 0:
+                        self.stat.print()
 
-                self.queue.put((seek, sline))
-                seek += len(line)  # NOTE: length of original line!
-                self.total += 1
+                    sline = line.strip() if self.strip else line
+                    self.process(seek, sline)
+                    seek += len(line)  # NOTE: length of original line!
+                    pbar.update(seek)
 
     def end(self):
         path = self.fname + '.err'
-        poses = []
-        c = Counter()
-        while not self.qerr.empty():
-            id, pos = self.qerr.get()
-            poses.append(pos)
-            c[id] += 1
 
-        if poses:
+        if self.errs:
             with open(path, 'wb') as f:
                 pickle.dump((
-                    self.fname, self.strip, poses
+                    self.fname, self.strip, self.errs
                 ), f, protocol=pickle.HIGHEST_PROTOCOL)
 
-            print('%-20s | %s' % ('function', 'errors'))
-            print('---------------------+---------')
-            for id, cnt in c.most_common():
-                print('%-20s | %d' % (self.procs[id].func_name(), cnt))
-
-            print('Processed lines: %d (%0.2f%% errors)' %
-                  (self.total, sum(c.values())/self.total * 100))
+        self.stat.print()
 
 
 class ErrsPipe(Pipe):
@@ -89,7 +114,6 @@ class ErrsPipe(Pipe):
         Pipe.__init__(self)
         self.fname = fname
         self.strip = strip
-        self.total = 0
 
     def run(self):
         with open(self.fname, 'rb') as ferrs:
@@ -102,10 +126,10 @@ class ErrsPipe(Pipe):
                     if strip:
                         line = line.strip()
 
-                    self.queue.put((pos, line))
+                    self.process(pos, line)
 
     def end(self):
-        pass
+        self.stat.print()
 
 
 pfile = FilePipe
