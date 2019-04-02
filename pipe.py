@@ -95,7 +95,7 @@ class FilePipe(Pipe):
                     sline = line.strip() if self.strip else line
                     self.process(seek, sline)
                     seek += len(line)  # NOTE: length of original line!
-                    pbar.update(seek)
+                    pbar.update(len(line))
 
     def end(self):
         path = self.fname + '.err'
