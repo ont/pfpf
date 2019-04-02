@@ -38,6 +38,8 @@ class Processor(Process):
 
             except Exception as e:
                 tqdm.write('[!] %s' % repr(e))
+                tqdm.write('[>] %s' % repr(data))
+                tqdm.write('')
                 self.qerr.put((self.id, pos))  # send error position back
 
         if getattr(self.func, 'end', None):
