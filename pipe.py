@@ -11,7 +11,7 @@ class Pipe:
     """Base class for DSL"""
 
     def __init__(self, stat=Stat):
-        self.queue = Queue(1000)
+        self.queue = Queue(10000)
         self.qerr = Queue()  # WARN: unlimited queue for errors
         self.procs = []
         self.errs = []
@@ -22,7 +22,7 @@ class Pipe:
             raise Exception('%s is not callable' % func)
 
         qin = self.procs[-1].qout if self.procs else self.queue
-        proc = Processor(len(self.procs), func, qin, Queue(1000), self.qerr)
+        proc = Processor(len(self.procs), func, qin, Queue(10000), self.qerr)
 
         self.procs.append(proc)
 
@@ -68,6 +68,11 @@ class Pipe:
         """Must be called by run()"""
         self.queue.put((pos, data))
         self.stat.inc()
+
+        # TODO: magical constants
+        if (self.stat.total + 1) % 1000 == 0:
+            for proc in self.procs:
+                self.stat.qsize(proc.func_name(), proc.qin.qsize())
 
     def run(self):
         # call process(line) here for each line
