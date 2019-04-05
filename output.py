@@ -5,7 +5,10 @@ class Json:
     __name__ = 'json'
 
     def __init__(self, fname):
-        self.f = open(fname, 'w')
+        self.fname = fname
+
+    def start(self, id):
+        self.f = open(self.fname.replace('*', str(id)), 'w')
 
     def __call__(self, data):
         self.f.write(json.dumps(data, ensure_ascii=False))

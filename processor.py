@@ -1,49 +1,42 @@
 import types
 from tqdm import tqdm
-from multiprocessing import Process
 
 
-class Processor(Process):
+class Processor:
     """Wrapper around callable"""
 
-    def __init__(self, id, func, qin, qout, qerr):
-        Process.__init__(self)
+    def __init__(self, id, func, qerr):
         self.id = id
         self.func = func
-        self.qin = qin
-        self.qout = qout
         self.qerr = qerr
 
-    def run(self):
-        while True:
-            pair = self.qin.get()
-            if not pair:
-                self.qout.put(None)  # send stop signal further
-                break
+    def process(self, pos, data):
+        try:
+            res = self.func(data)
+            if not res:
+                # res = data
+                return  # data was filtered out
 
-            pos, data = pair
+            if isinstance(res, types.GeneratorType):
+                # multiple result for single input
+                for sres in res:
+                    yield pos, sres
+            else:
+                yield pos, res
 
-            try:
-                res = self.func(data)
-                if not res:
-                    # res = data
-                    continue  # data was filtered out
+        except Exception as e:
+            tqdm.write('[!] %s: %s' % (self.func_name(), repr(e)))
+            tqdm.write('[>] %s: %s' % (self.func_name(), repr(data)))
+            tqdm.write('')
+            self.qerr.put((self.id, pos))  # send error position back
 
-                if isinstance(res, types.GeneratorType):
-                    # multiple result for single input
-                    for sres in res:
-                        self.qout.put((pos, sres))
-                else:
-                    self.qout.put((pos, res))
+    def start(self, id):
+        if getattr(self.func, 'start', None):
+            self.func.start(id)
 
-            except Exception as e:
-                tqdm.write('[!] %s' % repr(e))
-                tqdm.write('[>] %s' % repr(data))
-                tqdm.write('')
-                self.qerr.put((self.id, pos))  # send error position back
-
+    def end(self):
         if getattr(self.func, 'end', None):
-            self.func.end()  # call end on object
+            self.func.end()
 
     def func_name(self):
         """Returns name of callable"""
